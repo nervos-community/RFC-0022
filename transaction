@@ -1,0 +1,525 @@
+# CKB 的交易结构
+
+原文链接请点击[这里](https://github.com/nervosnetwork/rfcs/blob/transaction-structure/rfcs/0022-transaction-structure/0022-transaction-structure.md)
+
+---
+
+In this article, let's delve into an essential data structure in CKB, the transaction.
+在本文中，让我们深入探究 CKB 基本的数据结构--交易。
+
+This article has two parts. The first part covers the core transaction features, and the second part introduces some extensions.
+这篇文章分成两个部分。第一个部分包含了*核心的交易特征*，而第二部分介绍一些延伸的内容。在写这篇文章时，相应的 CKB 版本是 v0.25.0，在未来的版本中交易结构还可能有所变动。
+
+![](transaction-overview.png)
+
+上图是关于交易结构的概览。有别与逐字逐句的解释，我将会介绍各种 CKB 交易能提供的特征，以及在这些交易特征中这些名词的意思。
+
+
+Part I: Core Features *核心特征*
+
+Value Storage *价值**储存*
+
+CKB adopts the UTXO model. A transaction destroys some outputs created in previous transactions and creates some new outputs. We call the transaction output a cell in CKB. Thus the name cell and transaction output are interchangeable.
+
+CKB 采用 UTXO 模型。一个交易破坏了一些在先前交易下创造的输出，并且创造了一些新的输出。我们在 CKB 中将此交易输出称做一个 Cell。因此在这里的 Cell 和交易输出是可以替换的。
+
+The following diagram shows the fields used in this layer. 
+下图显示了在此层中会出现的专有名词。
+
+[Image: image.png]The transaction destroys the cells in inputs and creates the cells in outputs.
+此交易破坏了输入 inputs 中的 Cell，同时创造了在输出outputs中的 Cell。
+
+The CKB chain packages transactions into blocks. We can use block number to refer to a block in the chain, which is an increasing non-negative integer starting from 0, the genesis block. The transactions in a block are also ordered. We say a block is older if it has a smaller block number, a transaction is older if either it is in an older block, or its position in a block is before another transaction. In the following example, Block i is older than Block i + 1. Transaction tx1 is older than tx2 and is older than tx3.
+ 
+CKB 区块链将交易打包成块。我们可以在区块中利用编号是从零（也就是创世区块）开始递增的非负整数，作为区块编号来关联链上的区块。在区块中的交易也是按照顺序排列的。我们会说一个有较小的区块编号的区块是较旧的区块，一个交易如果在一个较旧的区块上，或者它在这个区块的位置早于其它区块，那么它也会是较旧的交易。在下面的范例中，区块 i 是比区块 i+1 旧的。交易 tx1 要比 tx2 和 tx3 还要旧。
+[Image: image.png]A live cell is the one that appears as an output but not as an input in all the older transactions. A dead cell has already been used as an input in any older transaction. A transaction can only use live cells as inputs.
+在所有较旧的交易中，一个可用（Live）的 Cell 会以输出而非输入的形式出现。一个被销毁（Dead）的 Cell 代表它是以输出的形式在任何较旧的交易中被使用过。一个交易只能以可用的 Cell 作为输入。
+
+We can compute the transaction hash from all transaction fields except  witnesses 。See Appendix A how to calculate the transaction hash.
+我们可以从除了 witnesses之外的所有交易字段计算交易的哈希。关于如何计算交易哈希的更多信息，可以参阅附录。
+
+The transaction hash is considered unique. Since a cell is always created by a transaction, and every new cell has its position in the transaction outputs array, we can refer to a cell by transaction hash and outputs index. The structure OutPoint is a reference type. The transaction uses OutPoint in inputs to reference the previously created cells instead of embedding them.
+交易哈希是独一无二的。因为一个 Cell 总是被一个交易创造出来，而每个新的 Cell 在交易输出的数组中都有他自己的位置，所以我们可以通过交易哈希以及输出索引去指向一个 Cell。OutPoint结构是一种引用类型。交易在输入时会使用 OutPoint来指向先前被创造的 Cell，而非嵌入其中。
+[Image: image.png]The cell stores the CKB Token in the field capacity. A transaction cannot mint capacities from the air, so a transaction must meet the following rule
+Cell 将 CKB 代币存储在字段capacity 中。一个交易不能够凭空铸造容量（货币），所以交易必将符合以下的规则：
+
+sum(cell's capacity for each cell in inputs)
+≥ sum(cell's capacity for each cell in outputs)
+
+sum(在输入中每个的cell的容量)≥ sum(在输出中每个cell的容量)
+
+在输入中每个 Cell 容量的总和要大于等于在输出中每个 Cell 容量的总和。
+
+Miners can collect the difference as a fee.
+矿工可以收取这两者之间的价差做为手续费。
+
+fee = sum(cell's capacity for each cell in inputs）- sum(cell's capacity for each cell in outputs)
+
+fee = sum(在输入中每个的cell'的容量）- sum(在输出中每个cell的容量)
+
+If you are familiar with Bitcoin, you’ll find that the Value Storage layer is similar, but lacking the locking script to protect the transaction output ownership. CKB does have that feature — but before we explore that, let‘s discuss Cell Data and Code Locating layers, which are the dependencies of any scripting feature in CKB.
+
+如果你熟悉比特币，那么就会发现在价值储存层都是相似的，但是比特币缺乏锁定脚本来保护交易输出的所有权。CKB 正好有这个特征，但是在我们探索这个话题之前，让我们先来谈谈 Cell Data 和 Code Locating 层吧，这是任何 CKB 中脚本特征的依据。
+
+
+Cell Data
+
+Instead of holding only the token value, CKB cells can store arbitrary data as well.
+除了能够存储价值通证以外，CKB Cell 还能储存任意数据。
+
+[Image: image.png]
+The field  outputs_data is a parallel array of outputs. The data of the i-th cell in outputs is the i-th item in outputs_data
+
+字段  outputs_data是输出的并行数组。 在outputs 中第 i 个 Cell 的数据对应的是 outputs_data 中的第 i 项。
+
+[Image: image.png]The capacity in the cell is not only the amount of the stored tokens, but it is also a limit on how much data the cell can store. That's where the name comes from—it is the storage capacity of the cell.
+
+Cell 中的 capacity不只代表通证的数额，也代表能够存储数据的限制。这也是为什么把它叫做这个名字的原因，因为它代表 Cell 的存储容量。
+
+The capacity is not only used to store data—it also has to cover all the fields in the cell, including 
+data, lock, type, and capacity itself.
+
+Capacity 不仅能用于存储数据，它还需要涵盖 Cell 中的所有字段，包括 data, lock, type,以及 capacity本身。
+
+The specification to compute occupied capacity will have its RFC in the future, which is currently a draft (https://github.com/nervosnetwork/rfcs/issues/118).
+在今后，会有计算占用容量规范的 RFC，最近已经有一个草稿 (https://github.com/nervosnetwork/rfcs/issues/118)出现了。
+计算占用容量的规范请参考：https://github.com/nervosnetwork/ckb/wiki/Occupied-Capacity
+
+The transaction must create an output cell which occupied capacity is less than the cell capacity.
+交易势必会创造一个占用容量小于 Cell 容量的输出 Cell。
+
+occupied(cell) ≤ cell's capacity
+
+
+Code Locating 代码定位（查看）
+
+The cell has two fields who’s type is Script. The CKB VM will run the lock scripts of all the cells in inputs, and run the type scripts of all the cells in both inputs and outputs.
+Cell 中有两种类型是Script 的字段。CKB-VM 将在输入中运行所有 Cell 中的lock 脚本，而在输入与输出中同时运行所有 Cell 中的type脚本。
+
+We differentiate the terms script and code.
+
+* A script is the script structure.
+* The code is the RISC-V binary.
+* A code cell is cell who’s data is code.
+
+我们区分了代码和脚本这两种术语
+
+* *脚本*是脚本结构
+* *代码*是 RISC-V 的二进制
+* 一个代码 Cell 是其数据为代码的 Cell
+
+
+The script does not include the code directly. See the script structure below. Let’s ignore the hash type Type and the field args for now.
+
+脚本并没有直接包含代码。看看下面的脚本结构。现在我们可以忽略哈希类型的Type以及args字段。
+
+[Image: image.png]
+
+When a CKB VM needs to run a script, it must find its code first. The fields code_hash and hash_type are used to locate the code.
+
+当 CKB-VM 需要运行一个脚本时，它必须要先找到它的代码。字段 code_hash 和hash_type 就是用来查看代码的。
+
+In CKB, the script code is compiled into RISC-V binary. The binary is stored as the data in a cell. When hash_type is "Data", the script locates a cell in which data hash equals the script's code_hash. The cell data hash, as the name suggests, is computed from the cell data (see Appendix A). The scope is limited in the transaction; script can only find a matched cell from cell_deps.
+
+在 CKB 中，脚本代码被编译成 RISC-V 二进制文件。这个二进制文件是以数据的形式存储在 Cell 中的。当 hash_type是数据时，脚本会被定位在一个数据哈希和脚本的 code_hash相等的 Cell 中。Cell 数据哈希，如其名所示，是从 Cell 的数据中算出来的（详见附录 A）。在交易中的范围是有限制的，脚本只能从 cell_deps 中找到一个匹配的 Cell。
+[Image: image.png]
+The following diagram shows how CKB finds a matched script code.
+下图将解释 CKB 如何找到相应的脚本代码。
+[Image: image.png]If you want to use a script in CKB, follow the code locating rules:
+
+* Compile your code into RISC-V binary. You can find some examples in the repository (https://github.com/nervosnetwork/ckb-system-scripts) which builds the code for system cells.
+* Create a cell which stores the binary as data in a transaction, and send the transaction to the chain.
+* Construct a script structure, in which hash_type is "Data", and code_hash is just the hash of the built binary.
+* Use the script as the type or the lock script in a cell.
+* If the script has to run in a transaction, include the code cell out point in the cell_deps.
+
+如果你想使用 CKB 中的脚本，那么应该遵循代码定位的规则：
+
+* 把你的代码编译成 RISC-V 二进制文件。你可以在建构系统 Cell 代码的仓库 (https://github.com/nervosnetwork/ckb-system-scripts)中找到一些案例
+* 建立一个在交易中储存二进制文件作为数据的 Cell，并且将交易送到链上。
+* 建构一个脚本结构，其 hash_type是数据，code_hash只是构建二进制文件的哈希。
+* 使用脚本作为 Cell 中的一种形态或锁定脚本。
+* 如果脚本必须在交易中运行，请包含指向 cell_deps的代码 Cell。
+
+
+The cells in cell_deps must be live, just like inputs. Unlike inputs, a cell only used in cell_deps is not considered dead.
+在 cell_deps的 Cell 必定是可用的，就像是inputs一样。但有别于inputs，一个只在 cell_deps中被使用的 Cell 不会被认为是被销毁的。
+
+The following two sections will talk about how the script is used in a transaction to lock the cells and establish contracts on cells.
+下面两部分我们将讨论脚本如何在交易中用于锁定 Cell，以及如何建立 Cell 上的合约。
+
+
+Lock Script 锁定脚本
+
+Every cell has a lock script. The lock script must run when the cell is used as an input in a transaction. When the script only appears in the outputs, it is not required to reveal the corresponding code in 
+cell_deps. A transaction is valid only when all the lock scripts in the inputs exit normally. Since the script runs on outputs, it acts as the lock to control who can unlock and destroy the cell, as well as spend the capacity stored in the cell.
+
+每个 Cell 都有一个锁定脚本。当交易中的 Cell 被以输入的形式使用时，锁定脚本必须执行。当脚本只出现在输出时， 则不需要显示在 cell_deps中相应的代码中。交易只有在所有的输入中锁定脚本正常退出时才有效。因为脚本在输出上运行，所以它可以扮演锁的角色来控制谁可以解锁或者破坏 Cell，以及花费储存在 Cell 中的容量。
+
+[Image: image.png]Following is an example lock script code which always exits normally. Anyone can destroy the cell if it uses the code as the lock script.
+
+以下是一个总是正常退出的锁定脚本代码范例。当任何人使用这个代码作为锁定脚本时都可以破坏 Cell。
+
+int main(int argc, char *argv[]) {
+    return 0;
+}
+
+The most popular way to lock a digital asset is the digital signature created by asymmetric cryptography.
+
+The signature algorithm has two requirements:
+
+* The cell must contain the information of the public key, so only the real private key can create a valid signature.
+* The transaction must contain the signatures, which usually signs the whole transaction as the message.
+
+最主流的锁定数字资产的方式是用非对称加密创造的数字签章。
+
+这个签名演算法有两个要求：
+
+* Cell 必须要包含公钥的信息，所以只有真正的私钥可以创造有效的签名；
+* 交易必须包含签名，而且通常以整个交易作为消息去签名。
+
+
+In CKB, the public key fingerprint can be stored in the args field in the script structure, and the signature can be stored in the witnesses fields in the transaction. I use "can" because it is just the recommended way, and is used in the default secp256k1 lock script (https://github.com/nervosnetwork/ckb-system-scripts/blob/master/c/secp256k1_blake160_sighash_all.c). The script code is able to read any part of a transaction, so the lock script can choose a different convention, for example, storing the public key information in the cell data. However, if all the lock scripts follow the recommended convention, it can simplify the apps which create transactions, such as a wallet.
+
+在 CKB 中，公钥指纹可以在脚本结构的 args 字段中被存储，同时这个签名可以在交易的 witnesses字段中被存储。我使用「可以」是因为这只是一个我推荐的方式，并且只用在默认的 Secp256k1 锁定脚本 (https://github.com/nervosnetwork/ckb-system-scripts/blob/master/c/secp256k1_blake160_sighash_all.c)中。脚本代码可以读取交易的任何一部分。所以锁定脚本可以选择不同的协定，例如，储存公钥的信息在 Cell 数据中。然而，如果所有锁定脚本都跟随推荐的协定，他就可以简化创建交易的应用程序，像是钱包。
+[Image: image.png]Now let’s see how the script code is located and loaded, and how the code accesses inputs, script args, and witnesses.
+
+First, note that CKB does not run the lock script input by input. It first groups the inputs by lock script and runs the same script only once. CKB runs a script in 3 steps: script grouping, code locating and running.
+
+让我们看一下脚本代码是如何被定位和载入的，以及代码如何访问输入、脚本参数（script args）和 witnesses。
+
+首先，请注意 CKB 并不会在逐个输入之间运行锁定脚本。首先它会先按锁定脚本进行分组，并且只运行一次相同的锁定脚本。CKB 会按照这三个步骤运行：脚本分组（script grouping），代码定位（code locating）以及运行。
+[Image: image.png]The diagram above shows the first two steps.
+
+1. First, CKB groups inputs by lock script. In the example transaction, there are two different lock scripts used in inputs. Although they locate to the same code, they have different args. Let’s focus on g1. It has two inputs with index 0 and 2. The script and the input indices will be used in step 3 later.
+2. Then CKB locates the code from cell deps. It resolves to the cell with data hash Hs and will use its data as the code.
+
+上图展示了第一步中的两个步骤
+
+1. 首先，CKB 会借由锁定脚本去进行分组。在范例的交易里有两个不同的锁定脚本在输入中被使用。虽然它们都定位在相同的代码中，但它们有不同的 args。我们来看一下 g1。这里有两个索引为 0 和 2 的输入。脚本和输入索引会在步骤三后被使用。
+2. 然后 CKB 会从 cell deps 上查找代码。这将 Cell 解析成带有数据的哈希 Hs ，并且将会用此数据作为代码。
+
+
+Now CKB can load the script code binary and run the code starting from the entry function. The script can read itself via syscall ckb_load_script.
+
+
+ckb_load_script(addr, len, offset)
+
+
+目前 CKB 可以载入二进制的脚本代码并且从 entry 这个函数开始运行。脚本可以通过 ckb_load_script的系统调用自行读取
+
+ckb_load_script(addr, len, offset)
+
+
+Various CKB syscalls are designed to read data from the transaction. These syscalls have an argument to specify where to read the data. For example, to load the first witness:
+
+ckb_load_witness(addr, len, offset, 0, CKB_SOURCE_INPUT);
+
+
+The first arguments control where to store the read data and how many bytes to read. Let’s ignore them in the following paragraphs.
+许多 CKB 的系统调用都被用于从交易中读取数据。这些系统调用有一个指明哪里可以读取数据的参数。例如，载入第一个 witness：
+ckb_load_witness(addr, len, offset, 0, CKB_SOURCE_INPUT);
+
+第一个参数控制哪里可以存储读取的数据，以及有多少 byte 已被读取。在接下来的章节中我们先忽略它。
+
+The fifth argument is the data source. CKB_SOURCE_INPUT means reading from transaction inputs, and the fourth argument 0 is the index into the inputs array.CKB_SOURCE_INPUT is also used to read witnesses.
+
+第五个参数是数据源。CKB_SOURCE_INPUT代表从交易输入中读取，第四个参数 0 则是输入数组的索引。CKB_SOURCE_INPUT 也用于读取 witnesses。
+
+There's no source like CKB_SOURCE_WITNESS, since the witnesses is a parallel array of inputs. They have a one-to-one relationship by index.
+
+这里不会有像 CKB_SOURCE_WITNESS一样的数据源，因为 witnesses 是 inputs的并行数组。通过索引他们会呈现一对一的关系。
+
+Remember that we have saved the indices of the input when grouping inputs by the lock script. This info is used to create the virtual witnesses and inputs array for the group. The code can read input or witness using the index in the virtual array via a special source CKB_SOURCE_GROUP_INPUT. Reading a witness using CKB_SOURCE_GROUP_INPUT just reads the witnesses which has the same position with the specified input.
+
+当我们在借助锁定脚本将输入分组时，我们已经储存了输入的索引。这个信息用于为分组创造虚拟 witness 和输入数组。这个代码可以通过一个特殊的数据源 CKB_SOURCE_GROUP_INPUT，来利用在虚拟数组中的索引去读取输入或 witness。通过CKB_SOURCE_GROUP_INPUT只能读取在同样位子，并且有特定输出的 witness。
+
+[Image: image.png]All the syscalls that read data related to the input, can use CKB_SOURCE_GROUP_INPUT and the index in the virtual inputs array, such as ckb_load_cell_* syscalls family
+
+所有读取和输入相关数据的系统调用，都可以利用 CKB_SOURCE_GROUP_INPUT以及在虚拟输入数组中的索引，例如ckb_load_cell_* 系统调用家族。
+
+
+Type Script 类型脚本
+
+Type script is very similar to lock script, with two differences:
+
+* Type script is optional.
+* In a transaction, CKB must run the type scripts in both inputs and outputs.
+
+类型脚本和锁定脚本很相似，但有两点不同:
+
+* 类型脚本是随机的。
+* 在任一交易中，CKB 必须在输入和输出端都运行类型脚本。
+
+Although we can only keep one type of script in the cell, we don’t want to disrupt the different responsibilities in a single script.
+虽然我们只能在 Cell 中维持一种脚本，但我们不会想要在一个单一的脚本中破坏不同的职责。
+
+The lock script is only executed for outputs, so its primary responsibility is protecting the cells. Only the owner is allowed to use the cell as input, and spend the token stored along with it.
+
+锁定脚本只为输出执行，所以他的首要任务是保护 Cell。只有所有者可以以输入的形式使用 Cell，以及花费储存于其中的通证。
+
+The type script is intended to establish some contracts on the cells. When you get a cell with a specified type, you can ensure that the cell has passed the verification in the specific code. And the code is also executed when the cell is destroyed. A typical scenario of type script is user-defined token. The type script must run on outputs, so the token issuance must be authorized.
+
+类型脚本的目的是在 Cell 上建立合约。当你得到一个特殊类型的合约时，你可以确定 Cell 已经在特定代码中通过验证。同时这个代码也会在 Cell 被破坏时被执行。类型脚本的典型情况是用户自定义的 Token，这种类型脚本必需在输出上运行，所以通证的发行必须被授权。
+
+Running type script on inputs is very important for contracts; for example, a contract to let a user mortgage some amount of CKB tokens to rent an asset offline. If the type script does not run on inputs, the user can get back the CKB tokens without authority from the contract by merely destroying the cells and transferring the capacity to a new cell without type script.
+
+The steps to run type script is also similar to lock script. Except that
+
+1. Cells without a type script are ignored.
+2. The script group contains both inputs and outputs.
+
+在输入上运行类型脚本对合约而言非常重要；例如一个让用户可以在线下抵押 CKB 来租用资产的合约，如果这个类型脚本不在输入上运行，用户可以在没有权限的情况下从合约中取回 CKB，只需销毁这个 Cell 并将容量转移到一个没有类型脚本的新 Cell 上即可。
+
+这个运行类型脚本的步骤和锁定脚本也很相似，除了
+
+1. 没有类型脚本的 Cell 会被忽略
+2. 脚本群组包含输入与输出
+
+[Image: image.png]Like CKB_SOURCE_GROUP_INPUT, there's a special data source CKB_SOURCE_GROUP_OUTPUT to use the index into the virtual outputs array in the script group.
+
+像 CKB_SOURCE_GROUP_INPUT，有一个特殊的数据源 CKB_SOURCE_GROUP_OUTPUT将索引使用到脚本组的虚拟输出数组中。
+
+
+Recap of The Transaction Structure in Part I 第一部分的交易结构概述
+
+[Image: image.png]
+Part II: Extensions 扩展
+
+In part I, I introduced the core features which the transaction provides. The features introduced in this part are some extensions that CKB can work without, but these extensions will improve the cell model.
+
+
+
+在第一部分，我介绍了交易提供的核心特征。在这个部分，我将介绍一些 CKB 不需要他们也能运行的延伸套件的特征，但这些套件可以使 Cell 模型变的更好。
+
+
+The diagram below is the overview of the new fields covered in this part.
+下图是在这个部分会出现的新字段（标有黄色底）的总览。
+[Image: image.png]
+Dep Group
+
+Dep Group is a cell which bundles several cells as its members. When a dep group cell is used in cell_deps, it has the same effect as adding all its members into cell_deps.
+Dep Group stores the serialized list of OutPoint in cell data. Each OutPoint points to one of the group members.
+
+Dep Group 是一个捆绑许多 Cell 作为其成员的 Cell。当一个 dep group 的 Cell 在 cell_deps中被使用时，它的效果和添加全部的成员到 cell_deps中是一样的。Dep Group 在 Cell 数据中存储了一系列的 OutPoint 清单。每一个 OutPoint 都指向其中一个群体的成员。
+
+The structure CellDep has a field dep_type to differentiate the normal cells which provide the code directly, and the dep groups which is expanded to its members inside cell_deps.
+CellDep结构中有个叫 dep_type的字段，可以用于区分直接提供代码的普通 Cell，和在 cell_deps中扩展至其成员的 dep group。
+
+[Image: image.png]
+
+The dep group is expanded before locating and running code, in which only the expanded cell_deps are visible.
+Dep group 会在定位和运行节点之前被扩展，只有被扩展的 cell_deps才是可见的。
+[Image: image.png]In v0.19.0, the lock script secp256k1 is split into code cell and data cell. The code cell loads the data cell via cell_deps. So if a transaction needs to unlock a cell locked by secp256k1, it must add both cells in cell_deps. With dep group, the transaction only needs the dep group.
+
+在 v0.25.0 版中，锁定脚本 secp256k1 被分成 code cell 和 data cell。code cell 通过 cell_deps 载入 data cell。所以如果一个交易要解锁一个被 secp256k1 锁定的 Cell，那么他一定要在 cell_deps加上两个 Cell。在 dep group 中，交易就只需要 dep group 即可。
+
+There are two reasons why we split the secp256k1 cell.
+The code cell is small, which allows us to update it when the block size limit is low.
+The data cell can be shared. For example, we have implemented another lock script which uses ripemd160 to verify the public key hash. This script reuses the data cell.
+
+我们分离 secp256k1 cell 有两个原因。
+
+
+* code cell 很小，这让我们可以在区块大小限制很低的时候就更新它。
+* data cell 可以被共享。例如，我们已经安装了另一个使用 ripemd160 的锁定脚本来验证公钥的哈希值。这个脚本就重用了 data cell。
+
+
+
+
+Upgradable Script 可升级脚本
+
+In Lock Script in Part I, I described how a script locates its code via cell data hash. Once a cell is created, its associated script code cannot change, since it is infeasible to find a different piece of code that has the same hash.
+Script has another option for hash_type, Type.
+
+在第一部分的锁定脚本中，我描述了一个脚本如何通过 Cell 的数据哈希来定位它的代码。一旦一个 Cell 被创建，那么相关联的脚本代码就不会被改变，因为要找到一个有相同的哈希的另一段代码是不可能的。
+
+脚本有另一个 hash_type的选项，Type。
+[Image: image.png]When the script uses the hash type Type, it matches the cell in which type script hash equals the code_hash. The type script hash is computed from the cell type field (see Appendix A).
+
+当脚本使用了 hash type 的 Type，它会匹配相等于 code_hash的类型脚本哈希的 Cell。类型脚本的哈希是从 Cell 的 type字段中计算出来的（详见附录 A）。 
+[Image: image.png]Now it is possible to upgrade code if the cell uses a script which locates code via type script hash, by creating a new cell with the same type script. The new cell has the updated code. The transaction which adds the new cell in dep_cells will use the new version.
+现在，如果 Cell 用一个通过类型脚本哈希来定位代码的脚本，并通过创建一个具有相同类型脚本的新 Cell，那么我们就可以升级代码了。新的 Cell 已经有更新的脚本，在 dep_cells 中增加了新 Cell 的交易将会使用这个新的版本。
+
+However, this only solves one problem. It is not safe if an adversary can create a cell with the same type script but using forged code as the data. The adversary can bypass the script verification by using the fake cell as a dep. The following chapter will describe a script to solve the second problem.
+
+然而，这只解决了一个问题。如果一个作恶者创建一个拥有同种类型脚本的 Cell，但使用伪造的代码作为数据，那么这还是不安全的。作恶者可以通过使用假的 Cell 作为 dep 来绕开脚本验证。下一章将描述解决第二个问题的脚本。
+
+Because the code referenced by type script hash can change, you must trust the script author to use this kind of type scripts. Although which version is used will depend on which cell is added in the transaction in dep_cells. The user can always inspect the code before signing the transaction. But if the script is used to unlock a cell, even the signature checking can be skipped.
+
+因为被类型脚本哈希引用的代码是可以被改变的，所以你必须信任脚本作者使用的这种类型脚本。虽然使用哪个版本取决于哪一个 Cell 在 dep_cells的交易中被添加。用户总是可以在签署交易之前检查代码。但是，如果脚本用于解锁 Cell，那么签名检查甚至是可以被略过的。
+
+
+
+Type ID 
+
+There’s a reason we choose cell type script hash to support upgradable script. If the adversary wants to create a cell with a specific type script, the transaction must be verified by the type script code.
+我们选择 Cell 类型脚本哈希的理由是用来支持可更新的脚本。如果作恶者想要创造具有特化的形态脚本的 Cell，那么交易必须被类型脚本的代码验证。
+
+Type ID is this kind of type script. As the name suggests, it ensures the uniqueness of the type script.
+
+This feature involves several type scripts, so I will use different terms to differentiate them:
+
+* The Type ID code cell is the cell which stores the code to verify that a type id is unique.
+* The Type ID code cell has a type script as well. We don’t care about the actual content for now, so let’s assume the type script hash is TI.
+* A Type ID is a type script in which hash_type is "Type", and code_hash is TI.
+
+Type ID 就是这种类型的类型脚本。如其名所示，他确保了类型脚本的独特性。
+
+这个特征包括了多种类型脚本，所以我会用不同专有名词去区分他们：
+
+* Type ID 的代码 Cell 是一个存储代码来验证 type id 是否是独一无二的 Cell。
+* Type ID 的代码一样有类型脚本。我们现在不会在意实际的内容，让我们假设类型脚本的哈希是 T1
+* Type ID 是一个 hash_type是 Type，且 code_hash是 T1 的类型脚本。
+
+
+[Image: image.png]From Type Script Part I, we know that type script groups inputs and outputs first. In other words, if the type script is a type ID, the inputs and outputs in the group all have the same type ID.
+
+从 Part 1 的类型脚本中我们知道，类型脚本会先将输入与输出聚集。换句话说，如果一个类型脚本是 type ID，那么在同个群组的输入与输出都有同样的 type ID。
+
+The Type ID code verifies that, in any type id group, there is at most one input and at most one output. A transaction is allowed to have multiple type id groups depending on the numbers of inputs and outputs, the type id groups are categorized into three different types:
+
+* Type ID Creation Group has only one output.
+* Type ID Deletion Group has only one input.
+* Type ID Transfer Group has one input and one output.
+
+Type ID 的代码在验证的就是在任何代码中，至少都会有一组输出和一组输入。根据输入与输出的数量，一个交易允许有多种 type id 群组，type id 群组被分成以下三种不同的类型：
+
+* Type ID Creation Group 只有一个输出
+* Type ID Deletion Group 只有一个输入
+* Type ID Transfer Group 有一个输入和一个输出
+
+[Image: image.png]The transaction in the diagram above has all three kinds of type id groups.
+
+* G1 is a Type ID Transfer Group which transfers the type id from cell1 to cell4.
+* G2 is a Type ID Deletion Group which deletes the type id along with cell2.
+* G3 is a Type ID Creation Group which creates a new type id for cell3.
+
+上图的交易中有三种交易 ID 群组
+
+* G1 是将 type id 从 cell1 转移到 cell4 的 Type ID Transfer Group
+* G2 是依据 cell2 去删除 type id 的 Type ID Deletion Group
+* G3 是为 cell3 创建新的 type id 的 Type ID Creation Group
+
+
+In the Type ID Creation Group, the only argument in args is the hash of this transaction first CellInput structure and the output index of the cell in the group. For example, in the group g3, id3 is a hash on tx.inputs[0] and 0 (cell3's index in tx.outputs).
+
+There are two ways to create a new cell with a specific type id.
+
+1. Create a transaction where the hash of tx.inputs[0] and any index equal to a specific value. Since a cell can only be used as an input once in the chain, tx.inputs[0] must be different in each transaction; this problem is equivalent to finding a hash collision, the probability of which is negligible.
+2. Destroy the old cell in the same transaction.
+
+We assume that method 2 is the only way to create a cell equal to an existing type id. And this way requires the authorization of the original owner.
+
+在 Type ID Creation Group 中，在 args 中的唯一参数，是在群组中这个交易的第一个 CellInput结构的哈希，还有 Cell 的输出索引。例如，在群组 g3 中，id3 是一个在 tx.inputs[0]和 0（cell3 在 tx.outputs的索引）上的哈希。
+
+这里有两种可以透过特定的 type id 来创造新 Cell 的方法：
+
+
+1. 在 tx.inputs[0] 的哈希上创造一个交易以及任意等于特定值的索引。因为一个 Cell 只能被以输出的形式在链上被使用一次，所以 tx.inputs[0]在每个交易中必须是不同的。这个问题和找到一个哈希碰撞的值是一样的，可能性几乎可以忽略不计。
+2. 在同一个交易中破坏旧的 Cell
+
+我们假设方法 2 是唯一一个创建相等于既有 type id 的新 Cell 的方法。这个方法需要原有的所有者的授权。
+
+The Type ID code can be implemented only via CKB VM code, but we choose to implement it in the CKB node as a special system script, because if we want to be able to upgrade Type ID code later, it has to use itself as the type script via type script hash, which is a recursive dependency.
+
+Type ID 的代码只能通过 CKB-VM 的代码实行，但我们会选择在 CKB 的节点上以一个特殊的系统脚本来实行它，因为如果我们以后想升级 Type ID 的代码，就必须要通过一个递归依赖的类型脚本代码，来将自己作为类型脚本。
+[Image: image.png]                                                      TI is a hash of the content which contains TI itself.
+                                                                TI 是一个包含 T1 本身内容的哈希
+
+
+The Type ID code cell uses a special type script hash, which is just the ascii codes in hex of the text 
+0x00000000000000000000000000000000000000000000000000545950455f4944
+
+Type ID 的代码 Cell 使用了一个特殊的类型脚本哈希，也就是十六进制 ascii 码。
+0x00000000000000000000000000000000000000000000000000545950455f4944
+
+Header Deps
+
+Header Deps allow the script to read block headers. This feature has some limitation to ensure the transaction is determined.
+Header Deps 可以让脚本来读取区块头。这个功能有一定的限制以确保交易被确定。
+
+We say a transaction is determined only if all the scripts in the transaction have the determined results.
+我们只会在所有交易中的脚本已经有确定的结果时，才会说一笔交易已经确定了。
+
+Header Deps allows the scripts to read a block header where hashes are listed inheader_deps. There's another precondition that the transaction can only be added to the chain if all the blocks listed in header_deps are already in the chain (uncles excluded).
+
+Header Deps 允许脚本去读取其哈希已经列在 header_deps中的区块头。还有另一个先决条件，是交易只能在所有列在 header_deps 的区块都已经在链上时（叔块除外），才可以被添加到链上。
+
+There are two ways to load a header in a script using syscall ckb_load_header:
+
+* Via header deps index.
+* Via an input or a cell dep. The syscall will return the block in which the cell is created if that block is listed in header_deps.
+
+有两种方式可以利用 ckb_load_header系统调用来载入脚本中的区块头
+
+* 通过 header deps 的索引
+* 通过输入或一个 cell dep。如果区块有被列在 header_deps的话，系统调用会返回 Cell 被创造出的那个区块。
+
+The second way to load a header has another benefit — the script knows the cell is in the loaded block. DAO withdraw transaction use it to get the block number where the capacity was deposited.
+
+第二种载入区块头的方法有另一个好处是，脚本会知道 Cell 位于被载入的区块中。DAO 取出交易借此来获取存储容量的区块号。
+[Image: image.png]                                                                   Examples of loading header
+loading header 的示例
+[Image: image.png]
+
+Other Fields 其他字段
+
+The field since prevents a transaction from being mined before a specific time. This already has its own RFC (https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md).
+
+字段 since可以避免交易在特定时间前被挖出。详见 since RFC (https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0017-tx-valid-since/0017-tx-valid-since.md)。
+
+The field version is reserved for future usage. It must equal 0 in current version.
+
+字段 version 是预留在未来使用的。在当前版本中，它必须等于0。
+
+
+Exceptions 特例
+
+There are two special transactions in the system.
+
+The first one is the* cellbase*, which is the first transaction in every block. The cellbase transaction has only one dummy input. In the dummy input, the previous_outpoint does not refer to any cell but set to a special value. The since must be set to the block number.
+
+在此系统中有两个特殊的交易。
+
+第一个是 cellbase，这是每个区块中的第一个交易。cellbase 中只有一个仿真的输入。在这个仿真的交易中， previous_outpoint 不会关联人其他的 Cell，而是会设置一个特殊值。since 必须设置为区块编号。
+
+
+The outputs of the cellbase are the reward and transaction fees for an older block in the chain.
+cellbase 的输出是链上给旧区块的奖励和交易费。
+
+Cellbase is special because the output capacities do not come from inputs.
+Cellbase 是特殊的，因为他的输出容量并不来自于输出。
+
+Another special transaction is the *DAO withdraw *transaction. It also has a portion of output capacities that do not come from inputs. This portion is the interest from locking the cells in the DAO. CKB recognizes the DAO withdraw transaction by checking whether there are any inputs using DAO as the type script.
+
+另一个特殊的交易是 DAO 的取款交易。它也有部分的输出容量并非来自于输入。这部分是在 DAO 中锁定 Cell 所获得的收益。CKB 会通过检查是否有使用 DAO 作为类型脚本的输入来识别 DAO 的取款交易。
+
+
+Appendix A: Compute Various Hash 附录A：计算多种哈希
+
+Crypto Primitives— blake256 加密基本体
+
+CKB uses blake2b as the default hash algorithm. We use *blake256* to denote a function to get the first 256 bits of the blake2b hash with personal “ckb-default-hash”.
+
+CKB 使用 blake2b 作为默认的哈希演算法。我们用 blake256 来表示一个函数，用个人的「ckb-default-hash」来获取 blake2b 哈希的前 256 位。
+
+Transaction Hash 交易哈希
+
+Transaction hash is blake256(tx_hash_digest(tx)) where tx_hash_digest is a method to serialize all fields in a transaction excluding witnesses into binary. The serialization specification is not finalized yet, by now you can get the transaction hash via the RPC _compute_transaction_hash.
+
+交易哈希是 blake256(tx_hash_digest(tx))，其中 tx_hash_digest是将交易中的所有字段（不包括 witnesses）序列化为二进制的方法。序列化规范还没有进行最终的确定，现在，您可以通过 RPC _compute_transaction_hash获取交易哈希。
+
+
+Cell Data Hash Cell数据哈希
+
+Cell data hash is just blake256(data).
+
+cell 的数据哈希只是 blake256(data).
+
+Script Hash 脚本哈希
+
+Script hash is blake256(serialize(script)) where serialize turns the script structure into a block of binary. The serialization specification is not finalized yet, by now you can get the script hash via the RPC _compute_script_hash.
+
+脚本哈希是 blake256(serialize(script))，serialize 将脚本结构转换成二进制块。序列化规范还没有进行最终的确定，现在你可以通过 RPC _compute_script_hash来获取脚本哈希。
+Please review and comment on the official RFC on github (https://github.com/nervosnetwork/rfcs) . Questions? Join our Dev Group on Telegram (https://t.me/nervos_ckb_dev)
